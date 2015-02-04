@@ -113,7 +113,6 @@ class Model_Builder(object):
         if not os.path.exists(testPath):
             os.mkdir(testPath)
         poly = arcpy.MakeFeatureLayer_management(params[0].valueAsText)
-        outMain = params[1].valueAsText
         outRaw = rawPath+"\\"+os.path.basename(params[1].valueAsText)
         outFinal = finalPath+"\\"+os.path.basename(params[1].valueAsText)
         outTest = testPath+"\\"+os.path.basename(params[1].valueAsText)
@@ -310,13 +309,12 @@ class Model_Builder(object):
             remapRaster(outEleHHO, targetEleHHO, "Value", dawStats)
             remapRaster(outConfDist, targetConfDist, "Value", dtcStats)
             remapRaster(outEaConf, targetEaConf, "Value", dacStats)
-
         #Test against test points
         def AreaAndAccuracy(inRaster, inPoly):
             rasterPoly = outRaw+"_poly.shp"
             rasterPolyarea = 0
             lyrPolyarea = 0
-            testCount = arcpy.GetCount_management(testPoints)
+            testCount = int(arcpy.GetCount_management(testPoints).getOutput(0))
             arcpy.RasterToPolygon_conversion (inRaster, rasterPoly, "SIMPLIFY", "Value")
             with arcpy.da.SearchCursor(rasterPoly, ("GRIDCODE", "SHAPE@AREA")) as cursor:
                 for row in cursor:
@@ -326,14 +324,14 @@ class Model_Builder(object):
                 for row in cursor:
                     lyrPolyarea += row[0]
             targetAcres = rasterPolyarea/lyrPolyarea
-            arcpy.MakeFeatureLayer_management(rasterPoly, "in_memory\\rasterPoly", """ "GRIDCODE" = '1' """)
+            arcpy.MakeFeatureLayer_management(rasterPoly, "in_memory\\rasterPoly", """ "GRIDCODE" = 1 """)
             arcpy.MakeFeatureLayer_management(testPoints, "in_memory\\testPoints")
-            arcpy.AddMessage("selecting")
             arcpy.SelectLayerByLocation_management ("in_memory\\testPoints", "WITHIN", "in_memory\\rasterPoly")
-            selectCount = arcpy.GetCount_management("in_memory\\testPoints")
-            Accuracy = selectCount/testCount
-            indexValue = Accuracy/targetAcres
-            arcpy.AddMessage(os.path.basename(inRaster)+": Accuracy = "+str(Accuracy)+", Target Area Proportion = "+str(targetAcres)+", Index = "+str(indexValue))
+            selectCount = int(arcpy.GetCount_management("in_memory\\testPoints").getOutput(0))
+            Accuracy = float(selectCount)/float(testCount)
+            indexValue = float(Accuracy)/float(targetAcres)
+            arcpy.AddMessage(os.path.basename(inRaster)+": Accuracy = "+(str(Accuracy)[:5])+", Target Area Proportion = "+(str(targetAcres)[:5])+", Index = "+(str(indexValue)[:5]))
+            arcpy.Delete_management(rasterPoly)
             return targetAcres, Accuracy, indexValue
         #Evaluate accuracy and target area proprtion - generate accuracy/area index - eliminate where index < 1
         assessList = [targetSlope, targetTopoProm, targetHHODist, targetEleHHO, targetConfDist, targetEaConf]
@@ -343,7 +341,13 @@ class Model_Builder(object):
                 testX = AreaAndAccuracy(item, lyr)
                 if testX[2] >= 1:
                     sumDict[item] = testX
-        arcpy.AddMessage(sumDict)
-        nameList = sumList.keys()        
+        nameList = sumDict.keys()
+        #Weighted overlay
+        outWeight = outFinal+"wgt"
+        weightList = []
+        for item in sumDict:
+            weightList.append(str(item)+" Value "+str(sumDict[item][2]))
+            weightString = ";".join(weightList)                
+        arcpy.gp.WeightedSum_sa(weightString, outWeight)
         deleteInMemory()
         return
